@@ -11,6 +11,8 @@ import {
   Query,
 } from "type-graphql";
 import argon2 from "argon2";
+import { COOKIE_NAME } from "../constants";
+// import { EntityManager } from "@mikro-orm/postgresql";
 
 // resolvers for apollo graphql server
 
@@ -80,7 +82,21 @@ export class UserResolver {
       username: options.username,
       password: hashedPassword,
     });
+    // let user
     try {
+      // build custom query
+      // const result = await (em as EntityManager)
+      //   .createQueryBuilder(User)
+      //   .getKnexQuery()
+      //   .insert({
+      //     username: options.username,
+      //     password: hashedPassword,
+      //     created_at: new Date(),
+      //     updated_at: new Date(),
+      //   })
+      //   .returning("*");
+      // user = result[0];
+
       await em.persistAndFlush(user);
     } catch (err) {
       if (err.code === "23505" || err.detail.includes("already exists")) {
@@ -134,5 +150,19 @@ export class UserResolver {
     return {
       user,
     };
+  }
+
+  @Mutation(() => Boolean)
+  logout(@Ctx() { req, res }: MyContext) {
+    return new Promise((resolve) =>
+      req.session.destroy((err) => {
+        res.clearCookie(COOKIE_NAME);
+        if (err) {
+          console.log(err);
+          resolve(false);
+        }
+        resolve(true);
+      })
+    );
   }
 }
