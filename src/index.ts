@@ -1,7 +1,5 @@
-import "reflect-metadata";
-import { MikroORM } from "@mikro-orm/core";
+import "reflect-metadata"; // typeorm needs this
 import { COOKIE_NAME, __prod__ } from "./constants";
-import mikroOrmConfig from "./mikro-orm.config";
 import express from "express";
 import { ApolloServer } from "apollo-server-express";
 import { buildSchema } from "type-graphql";
@@ -13,6 +11,8 @@ import session from "express-session";
 import connectRedis from "connect-redis";
 import cors from "cors";
 import { User } from "./entities/User";
+import { Post } from "./entities/Post";
+import { createConnection } from "typeorm";
 
 // session custom variable type merging
 declare module "express-session" {
@@ -22,9 +22,15 @@ declare module "express-session" {
 }
 
 const main = async () => {
-  const orm = await MikroORM.init(mikroOrmConfig);
-  orm.em.nativeDelete(User, {});
-  await orm.getMigrator().up();
+  const conn = await createConnection({
+    type: "postgres",
+    database: "sma",
+    entities: [Post, User],
+    username: "postgres",
+    password: "123",
+    logging: true,
+    synchronize: true,
+  });
 
   const app = express();
 
@@ -63,7 +69,7 @@ const main = async () => {
       resolvers: [HelloResolver, PostResolver, UserResolver],
       validate: false,
     }),
-    context: ({ req, res }) => ({ em: orm.em, req, res, redis }),
+    context: ({ req, res }) => ({ req, res, redis }),
   });
 
   apolloServer.applyMiddleware({
