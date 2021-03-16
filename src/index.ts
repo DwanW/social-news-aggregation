@@ -14,6 +14,7 @@ import { User } from "./entities/User";
 import { Post } from "./entities/Post";
 import { createConnection } from "typeorm";
 import path from "path";
+import { Upvote } from "./entities/Upvote";
 
 // session custom variable type merging
 declare module "express-session" {
@@ -26,7 +27,7 @@ const main = async () => {
   const conn = await createConnection({
     type: "postgres",
     database: "sma",
-    entities: [Post, User],
+    entities: [Post, User, Upvote],
     username: "postgres",
     password: "123",
     logging: true,
