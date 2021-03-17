@@ -1,4 +1,5 @@
 import "reflect-metadata"; // typeorm needs this
+import "dotenv-safe/config";
 import { COOKIE_NAME, __prod__ } from "./constants";
 import express from "express";
 import { ApolloServer } from "apollo-server-express";
@@ -15,6 +16,7 @@ import { Post } from "./entities/Post";
 import { createConnection } from "typeorm";
 import path from "path";
 import { Upvote } from "./entities/Upvote";
+import { createUpvoteLoader, createUserLoader } from "./util/createLoaders";
 
 // session custom variable type merging
 declare module "express-session" {
@@ -26,12 +28,10 @@ declare module "express-session" {
 const main = async () => {
   const conn = await createConnection({
     type: "postgres",
-    database: "sma",
     entities: [Post, User, Upvote],
-    username: "postgres",
-    password: "123",
+    url: process.env.DATABASE_URL,
     logging: true,
-    synchronize: true,
+    // synchronize: true,
     migrations: [path.join(__dirname, "./migrations/*")],
   });
 
@@ -42,11 +42,11 @@ const main = async () => {
   const app = express();
 
   const RedisStore = connectRedis(session);
-  const redis = new Redis();
-
+  const redis = new Redis(process.env.REDIS_URL);
+  app.set("trust proxy", 1)
   app.use(
     cors({
-      origin: "http://localhost:3000",
+      origin: process.env.CORS_ORIGIN,
       credentials: true,
     })
   );
@@ -64,9 +64,10 @@ const main = async () => {
         httpOnly: true,
         sameSite: "lax",
         secure: __prod__, //cookie only works in https
+        // domain: __prod__ ? "mydomain" : undefined,
       },
       saveUninitialized: false,
-      secret: "alsdkmlaksmd", // make this env var
+      secret: process.env.SESSION_SECRET, // make this env var
       resave: false,
     })
   );
@@ -76,7 +77,13 @@ const main = async () => {
       resolvers: [HelloResolver, PostResolver, UserResolver],
       validate: false,
     }),
-    context: ({ req, res }) => ({ req, res, redis }),
+    context: ({ req, res }) => ({
+      req,
+      res,
+      redis,
+      userLoader: createUserLoader(),
+      upvoteLoader: createUpvoteLoader(),
+    }),
   });
 
   apolloServer.applyMiddleware({
@@ -84,7 +91,7 @@ const main = async () => {
     cors: false,
   });
 
-  app.listen(4000, () => {
+  app.listen(parseInt(process.env.PORT), () => {
     console.log("server started on http://localhost:4000");
     console.log("graphql started on http://localhost:4000/graphql");
   });

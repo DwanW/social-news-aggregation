@@ -12,12 +12,12 @@ import {
   FieldResolver,
   Root,
   ObjectType,
-  Info,
 } from "type-graphql";
 import { MyContext } from "../types";
 import { isAuth } from "../middleware/isAuth";
 import { getConnection } from "typeorm";
 import { Upvote } from "../entities/Upvote";
+import { User } from "../entities/User";
 
 @InputType()
 class PostInput {
@@ -43,6 +43,28 @@ export class PostResolver {
     return root.text.slice(0, 50) + "...";
   }
 
+  //relate post to creator
+  @FieldResolver(() => User)
+  creator(@Root() post: Post, @Ctx() { userLoader }: MyContext) {
+    return userLoader.load(post.creatorId);
+  }
+
+  @FieldResolver(() => Int, { nullable: true })
+  async voteStatus(
+    @Root() post: Post,
+    @Ctx() { upvoteLoader, req }: MyContext
+  ) {
+    if (!req.session.userId) {
+      return null;
+    }
+    const upvote = await upvoteLoader.load({
+      postId: post._id,
+      userId: req.session.userId,
+    });
+
+    return upvote ? upvote.value : null;
+  }
+
   @Mutation(() => Boolean)
   @UseMiddleware(isAuth)
   async vote(
@@ -54,18 +76,36 @@ export class PostResolver {
     const realValue = isUpvote ? 1 : -1;
     const { userId } = req.session;
     // await Upvote.insert({ userId, postId, value: realValue });
+    const upvote = await Upvote.findOne({ where: { postId, userId } });
+    if (upvote && upvote.value !== realValue) {
+      //changing vote
+      await getConnection().transaction(async (transManager) => {
+        await transManager.query(`
+        update upvote
+        set value = ${realValue}
+        where "postId" = ${postId} and "userId" = ${userId}
+        `);
 
-    await getConnection().query(
-      `
-    START TRANSACTION;
-    insert into upvote ("userId", "postId", value)
-    values (${userId}, ${postId}, ${realValue});
-    update post
-    set points = points + ${realValue}
-    where _id = ${postId};
-    COMMIT;
-    `
-    );
+        await transManager.query(`
+        update post
+        set points = points + ${realValue * 2}
+        where _id = ${postId}
+        `);
+      });
+    } else if (!upvote) {
+      //has never voted
+      await getConnection().transaction(async (transManager) => {
+        await transManager.query(`
+        insert into upvote ("userId", "postId", "value")
+        values (${userId}, ${postId}, ${realValue})
+        `);
+        await transManager.query(`
+        update post
+        set points = points + ${realValue}
+        where _id = ${postId}
+        `);
+      });
+    }
     return true;
   }
 
@@ -78,21 +118,14 @@ export class PostResolver {
     const realLimitPlusOne = realLimit + 1;
     // "p" for post "u" for creator
     const replacements: any[] = [realLimitPlusOne];
+
     if (cursor) {
       replacements.push(new Date(parseInt(cursor)));
     }
     const posts = await getConnection().query(
       `
-    select p.*,
-    json_build_object(
-      'id', u.id,
-      'username', u.username,
-      'email', u.email,
-      'createdAt', u."createdAt",
-      'updatedAt', u."updatedAt"
-      ) creator
+    select p.*
     from post p
-    inner join public.user u on u.id = p."creatorId"
     ${cursor ? `where p."createdAt" < $2` : ""}
     order by p."createdAt" DESC
     limit $1
@@ -100,20 +133,6 @@ export class PostResolver {
       replacements
     );
 
-    // const qb = getConnection()
-    //   .getRepository(Post)
-    //   .createQueryBuilder("p")
-    //   .innerJoinAndSelect("p.creator", "u", 'u.id = p."creatorId"')
-    //   .orderBy('p."createdAt"', "DESC")
-    //   .take(realLimitPlusOne);
-
-    // if (cursor) {
-    //   qb.where('p."createdAt" < :cursor', {
-    //     cursor: new Date(parseInt(cursor)),
-    //   });
-    // }
-
-    // const posts = await qb.getMany();
     // console.log("posts: ", posts);
     return {
       posts: posts.slice(0, realLimit),
@@ -136,23 +155,44 @@ export class PostResolver {
   }
 
   @Mutation(() => Post)
+  @UseMiddleware(isAuth)
   async updatePost(
-    @Arg("_id") _id: number,
-    @Arg("title", () => String, { nullable: true }) title: string
+    @Arg("_id", () => Int) _id: number,
+    @Arg("title") title: string,
+    @Arg("text") text: string,
+    @Ctx() { req }: MyContext
   ): Promise<Post | null> {
-    const post = await Post.findOne(_id);
-    if (!post) {
-      return null;
-    }
-    if (typeof title !== "undefined") {
-      Post.update({ _id }, { title });
-    }
-    return post;
+    const result = await getConnection()
+      .createQueryBuilder()
+      .update(Post)
+      .set({ title, text })
+      .where('_id = :_id and "creatorId" = :creatorId', {
+        _id,
+        creatorId: req.session.userId,
+      })
+      .returning("*")
+      .execute();
+
+    return result.raw[0];
   }
 
   @Mutation(() => Boolean)
-  async deletePost(@Arg("_id") _id: number): Promise<boolean> {
-    await Post.delete(_id);
+  @UseMiddleware(isAuth)
+  async deletePost(
+    @Arg("_id", () => Int) _id: number,
+    @Ctx() { req }: MyContext
+  ): Promise<boolean> {
+    const post = await Post.findOne(_id);
+
+    if (!post) {
+      return false;
+    }
+
+    if (post.creatorId !== req.session.userId) {
+      throw new Error("not authorized");
+    }
+    // await Upvote.delete({ postId: _id });
+    await Post.delete({ _id, creatorId: req.session.userId });
     return true;
   }
 }
