@@ -43,7 +43,7 @@ const main = async () => {
 
   const RedisStore = connectRedis(session);
   const redis = new Redis(process.env.REDIS_URL);
-  app.set("trust proxy", 1)
+  app.set("trust proxy", 1);
   app.use(
     cors({
       origin: process.env.CORS_ORIGIN,
@@ -92,8 +92,12 @@ const main = async () => {
   });
 
   app.listen(parseInt(process.env.PORT), () => {
-    console.log("server started on http://localhost:4000");
-    console.log("graphql started on http://localhost:4000/graphql");
+    console.log(
+      `🎉 express server started on http://localhost:${process.env.PORT}`
+    );
+    console.log(
+      `🚀 graphql server started on http://localhost:4000${apolloServer.graphqlPath}`
+    );
   });
 };
 
